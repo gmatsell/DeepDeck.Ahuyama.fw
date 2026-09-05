@@ -22,9 +22,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "keymap.c"
 #include "matrix.h"
 #include "hal_ble.h"
+#include "keycode_conv.h"
 #include "oled_tasks.h"
 #include "nvs_keymaps.h"
 #include "nvs_funcs.h"
@@ -127,6 +129,65 @@ void media_control_release(uint16_t keycode)
 {
 	uint8_t media_state[2] = {0};
 	xQueueSend(media_q, (void *)&media_state, (TickType_t)0);
+}
+
+// Send a macro as a sequence of steps. Steps are groups of up to MACRO_LEN keycodes
+// separated by KC_NO mid-array. Each step is press+release with MACRO_STEP_DELAY_MS between.
+static void send_macro_sequence(uint8_t macro_idx)
+{
+	uint8_t step_report[REPORT_LEN] = {0};
+	uint8_t release_report[REPORT_LEN] = {0};
+	uint16_t *keys = user_macros[macro_idx].key;
+
+	int pos = 0;
+	while (pos < USER_MACRO_LEN)
+	{
+		if (keys[pos] == KC_NO)
+		{
+			// trailing terminator — end of macro
+			break;
+		}
+
+		// collect one step (up to MACRO_LEN keys, until KC_NO or end)
+		memset(step_report, 0, sizeof(step_report));
+		uint8_t step_mod = 0;
+		uint8_t slot = 2; // slots 0=modifier, 1=led, 2+ = keys
+		for (int s = 0; s < MACRO_LEN && pos < USER_MACRO_LEN; s++, pos++)
+		{
+			uint16_t key = keys[pos];
+			if (key == KC_NO)
+			{
+				pos++; // consume the separator
+				break;
+			}
+			uint8_t mod = check_modifier(key);
+			if (mod)
+			{
+				step_mod |= mod;
+			}
+			else if (slot < REPORT_LEN)
+			{
+				step_report[slot++] = (uint8_t)key;
+			}
+		}
+		step_report[0] = step_mod;
+
+		// send press
+		if (BLE_EN == 1)
+			xQueueSend(keyboard_q, (void *)step_report, (TickType_t)0);
+		if (input_str_q != NULL)
+			xQueueSend(input_str_q, (void *)step_report, (TickType_t)0);
+
+		vTaskDelay(pdMS_TO_TICKS(MACRO_STEP_DELAY_MS));
+
+		// send release
+		if (BLE_EN == 1)
+			xQueueSend(keyboard_q, (void *)release_report, (TickType_t)0);
+		if (input_str_q != NULL)
+			xQueueSend(input_str_q, (void *)release_report, (TickType_t)0);
+
+		vTaskDelay(pdMS_TO_TICKS(MACRO_STEP_DELAY_MS));
+	}
 }
 
 // used for debouncing
@@ -292,29 +353,9 @@ uint8_t *check_key_state(dd_layer *keymap)
 					}
 
 					// checking for macros
-					// if ((keycode >= MACRO_BASE_VAL) && (keycode <= LAYER_HOLD_BASE_VAL))
 					if ((keycode >= MACRO_BASE_VAL) && (keycode <= MACRO_HOLD_MAX_VAL))
 					{
-						for (uint8_t i = 0; i < MACRO_LEN; i++)
-						{
-							// uint16_t key = macros[keycode - MACRO_BASE_VAL][i];
-							uint16_t key = user_macros[keycode - MACRO_BASE_VAL].key[i];
-
-							if (key == KC_NO)
-							{
-								// ESP_LOGI("BREAK", "BREAK");
-								break;
-							}
-							// ESP_LOGI("PressMacro", "keycode: %d", keycode - MACRO_BASE_VAL);
-							// current_report[REPORT_LEN - 1 - i] = key;
-							current_report[i + 2] = key; // 2 is an offset, as 0 and 1 are used for other reasons
-							// ESP_LOGI("PressMacro", "report_id: %d", i + 2);
-							modifier |= check_modifier(key);
-							// ESP_LOGI("PressMacro", "Key: %d", key);
-							// printf("\nmodifier:%d", modifier);
-						}
-
-						// ESP_LOGI("--", "Macro selected");
+						send_macro_sequence(keycode - MACRO_BASE_VAL);
 						continue;
 					}
 
@@ -353,22 +394,10 @@ uint8_t *check_key_state(dd_layer *keymap)
 								 current_layout);
 					}
 
-					// checking if macro was released
-					// if ((keycode >= MACRO_BASE_VAL) && (keycode <= LAYER_HOLD_BASE_VAL))
+					// macro release is a no-op: sequence was fully sent on press
 					if ((keycode >= MACRO_BASE_VAL) && (keycode <= MACRO_HOLD_MAX_VAL))
 					{
-						for (uint8_t i = 0; i < MACRO_LEN; i++)
-						{
-							// uint16_t key = macros[keycode - MACRO_BASE_VAL][i];
-							uint16_t key = user_macros[keycode - MACRO_BASE_VAL].key[i];
-
-							// ESP_LOGI("releaseMacro", "keycode: %d", keycode - MACRO_BASE_VAL);
-							current_report[i + 2] = 0; // 2 is an offset, as 0 and 1 are used for other reasons
-							// ESP_LOGI("releaseMacro", "report_id: %d", i + 2);
-							modifier &= ~check_modifier(key);
-							// ESP_LOGI("releaseMacro", "Key: %d", key);
-						}
-						// ESP_LOGI("--", "Macro selected. KEYCODE: %d", keycode);
+						// nothing to clear — send_macro_sequence() sent its own release reports
 					}
 
 					if (current_report[report_index] != 0)

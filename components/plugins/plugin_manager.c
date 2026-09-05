@@ -6,8 +6,11 @@
  */
 #include "esp_log.h"
 #include "plugin_manager.h"
+#include "layout_server.h"
 
 TaskHandle_t pluginHandle;
+uint8_t pluginEn = 0;
+uint8_t killServer = 0;
 #define PLUGIN_LOG "Plugin Manager"
 
 int taskFlag = 0;

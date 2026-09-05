@@ -21,8 +21,8 @@
 #include "esp_log.h"
 #include "i2c_bus.h"
 
-extern esp_err_t i2s_user_lock(void);
-extern esp_err_t i2s_user_unlock(void);
+static inline esp_err_t i2s_user_lock(void) { return ESP_OK; }
+static inline esp_err_t i2s_user_unlock(void) { return ESP_OK; }
 
 #define I2C_ACK_CHECK_EN 0x1     /*!< I2C master will check ack from slave*/
 #define I2C_ACK_CHECK_DIS 0x0     /*!< I2C master will not check ack from slave */

@@ -17,16 +17,8 @@
 
 #include "led_strip.h"
 #include "esp_err.h"
-
-/**
- * @brief Type of Rotary underlying device handle
- *
- */
-
-
-
-#define RMT_TX_CHANNEL_KEYPAD RMT_CHANNEL_0
-#define RMT_TX_CHANNEL_NOTIFICATION RMT_CHANNEL_1
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 
 #define RGB_LED_REFRESH_SPEED  (20) //default 30
 #define KEYBOARD_RGB_GPIO       17
@@ -45,13 +37,8 @@ void rgb_key_led_press(uint8_t row, uint8_t col);
 
 void hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *r, uint32_t *g, uint32_t *b);
 
-// Todo list:
-// Integrate the LED modes into the configuration. Tasks:
-// [] Review QMK way of manage leds with keys (mode, speed, color?)
-// [] Create an structure that manage LEDs characteristics
-// [] Create function that controls 2 mode LEDs
-// [] Create way of changing LED characteristic via key definitios OR via embedded settings menu.
-// 
+// LED modes: 0=off, 1=pulsating, 2=progressive, 3=rainbow, 4=solid colour, 5=active-key colour, 6=per-key colour per layer
+
 
 
 void key_led_modes(void);
@@ -73,7 +60,7 @@ typedef struct rgb_mode_t {
     }rgb_mode_t;
 
 //pulsating keys
-rbg_key rgb_key_status[RGB_LED_KEYBOARD_NUMBER];
+extern rbg_key rgb_key_status[RGB_LED_KEYBOARD_NUMBER];
 
 
 #endif /* RGB_LED_H_ */

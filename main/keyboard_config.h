@@ -8,8 +8,7 @@
 #include <string.h>
 #include <inttypes.h>
 #include "driver/gpio.h"
-#include "driver/touch_pad.h"
-#include "driver/adc.h"
+#include "esp_adc/adc_oneshot.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -83,7 +82,7 @@
  * use ADC1 only,  */
 
 //#define BATT_STAT //define to enable battery monitoring
-#define BATT_PIN ADC1_CHANNEL_7 //gpio pin 35, refer to the esp32 before modifying
+#define BATT_PIN ADC_CHANNEL_7 //gpio pin 35, refer to the esp32 before modifying
 
 //deep sleep parameters, mind that reconnecting after deep sleep might take a minute or two
 //#define SLEEP_MINS 50 // undefine if you do not need deep sleep, otherwise define number of minutes for deepsleep
@@ -99,7 +98,9 @@
 
 #define MAX_LAYER (LAYERS-1)
 #define MOD_LED_BYTES 2 //bytes for led status and modifiers
-#define MACRO_LEN 5 //keys for macros
+#define MACRO_LEN 5 //keys per macro step (HID report slot count — do not change)
+#define USER_MACRO_LEN 20 //total key slots per macro (steps separated by KC_NO)
+#define MACRO_STEP_DELAY_MS 10 //ms between sequential macro steps
 #define MACROS_NUM 40 //Available macro length
 #define USER_MACROS_NUM 200
 #define USER_MACRO_NAME_LEN 10

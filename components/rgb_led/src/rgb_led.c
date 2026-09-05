@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "driver/rmt.h"
 #include "esp_log.h"
 #include "led_strip.h"
 #include "rgb_led.h"
@@ -24,6 +23,7 @@ static const char *TAG = "RGB_LEDs";
 
 led_strip_t *rgb_key;
 led_strip_t *rgb_notif;
+rbg_key rgb_key_status[RGB_LED_KEYBOARD_NUMBER];
 
 /// @brief Input queue for sending mouse reports
 QueueHandle_t keyled_q;
@@ -86,43 +86,30 @@ void hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *r, uint32_t *g, uint3
 
 void rgb_notification_led_init(void)
 {
-    rmt_config_t config = RMT_DEFAULT_CONFIG_TX(NOTIFICATION_RGB_GPIO, RMT_TX_CHANNEL_NOTIFICATION);
-    // set counter clock to 40MHz
-    config.clk_div = 2;
-
-    ESP_ERROR_CHECK(rmt_config(&config));
-    ESP_ERROR_CHECK(rmt_driver_install(config.channel, 0, 0));
-
-    // install ws2812 driver
-    led_strip_config_t strip_config = LED_STRIP_DEFAULT_CONFIG(RGB_LED_NOTIFICATION_NUMBER, (led_strip_dev_t)config.channel);
+    led_strip_config_t strip_config = {
+        .max_leds = RGB_LED_NOTIFICATION_NUMBER,
+        .gpio     = NOTIFICATION_RGB_GPIO,
+    };
     rgb_notif = led_strip_new_rmt_ws2812(&strip_config);
-    if (!rgb_notif)
-    {
+    if (!rgb_notif) {
         ESP_LOGE(TAG, "Install notification LEDs failed");
+        return;
     }
-    // Clear LED strip (turn off all LEDs)
-    ESP_ERROR_CHECK(rgb_notif->clear(rgb_notif, 100));
+    rgb_notif->clear(rgb_notif, 100);
 }
 
 void rgb_key_led_init(void)
 {
-    rmt_config_t config = RMT_DEFAULT_CONFIG_TX(KEYBOARD_RGB_GPIO, RMT_TX_CHANNEL_KEYPAD);
-
-    // set counter clock to 40MHz
-    config.clk_div = 2;
-
-    ESP_ERROR_CHECK(rmt_config(&config));
-    ESP_ERROR_CHECK(rmt_driver_install(config.channel, 0, 0));
-
-    // install ws2812 driver
-    led_strip_config_t strip_config = LED_STRIP_DEFAULT_CONFIG(RGB_LED_KEYBOARD_NUMBER, (led_strip_dev_t)config.channel);
+    led_strip_config_t strip_config = {
+        .max_leds = RGB_LED_KEYBOARD_NUMBER,
+        .gpio     = KEYBOARD_RGB_GPIO,
+    };
     rgb_key = led_strip_new_rmt_ws2812(&strip_config);
-    if (!rgb_key)
-    {
+    if (!rgb_key) {
         ESP_LOGE(TAG, "Install key LEDs failed");
+        return;
     }
-    // Clear LED strip (turn off all LEDs)
-    ESP_ERROR_CHECK(rgb_key->clear(rgb_key, 100));
+    rgb_key->clear(rgb_key, 100);
 
     // Init rgb_keystatus
     for (uint8_t i = 0; i < RGB_LED_KEYBOARD_NUMBER; i++)
@@ -149,6 +136,9 @@ void rgb_key_led_press(uint8_t row, uint8_t col)
 
 void key_led_modes(void)
 {
+    if (!rgb_key && !rgb_notif) {
+        vTaskDelay(portMAX_DELAY);  /* LEDs failed to init, sleep forever */
+    }
     uint32_t red = 0;
     uint32_t green = 0;
     uint32_t blue = 0;
@@ -185,14 +175,14 @@ void key_led_modes(void)
             // new_mode = led_mode.mode;
             if (led_mode.mode != modes)
             {
-                ESP_ERROR_CHECK(rgb_key->clear(rgb_key, 100));
-                ESP_ERROR_CHECK(rgb_notif->clear(rgb_notif, 100));
+                if (rgb_key) rgb_key->clear(rgb_key, 100);
+                if (rgb_notif) rgb_notif->clear(rgb_notif, 100);
                 modes = led_mode.mode;
             }
 
             if (modes == 0)
             {
-                ESP_ERROR_CHECK(rgb_notif->clear(rgb_notif, 100));
+                if (rgb_notif) rgb_notif->clear(rgb_notif, 100);
             }
 
             if (modes == 4)
@@ -200,11 +190,11 @@ void key_led_modes(void)
                 for (int i = 0; i < RGB_LED_KEYBOARD_NUMBER; i++)
                 {
                     // Write RGB values to strip driver
-                    ESP_ERROR_CHECK(rgb_key->set_pixel(rgb_key, i, led_mode.rgb[0], led_mode.rgb[1], led_mode.rgb[2]));
-                    // ESP_ERROR_CHECK(rgb_key->set_pixel(rgb_key, i, 255, 2, 60));
+                    if (rgb_key) rgb_key->set_pixel(rgb_key, i, led_mode.rgb[0], led_mode.rgb[1], led_mode.rgb[2]);
+                    // if (rgb_key) rgb_key->set_pixel(rgb_key, i, 255, 2, 60);
                 }
                 // Flush RGB values to LEDs
-                ESP_ERROR_CHECK(rgb_key->refresh(rgb_key, 100));
+                if (rgb_key) rgb_key->refresh(rgb_key, 100);
             }
 
             if (modes == 5)
@@ -218,21 +208,31 @@ void key_led_modes(void)
 
                         if (key_layouts[current_layout].key_map[index][index_col] != 0)
                         {
-                            // Write RGB values to strip driver
-                            // ESP_LOGE(TAG, "led = %d on {%d, %d, %d}", dumy, led_mode.rgb[0], led_mode.rgb[1], led_mode.rgb[2]);
-                            ESP_ERROR_CHECK(rgb_key->set_pixel(rgb_key, dumy, led_mode.rgb[0], led_mode.rgb[1], led_mode.rgb[2]));
+                            if (rgb_key) rgb_key->set_pixel(rgb_key, dumy, led_mode.rgb[0], led_mode.rgb[1], led_mode.rgb[2]);
                         }
 
                         else
                         {
-                            // ESP_LOGE(TAG, "led  = %d off", dumy);
-                            ESP_ERROR_CHECK(rgb_key->set_pixel(rgb_key, dumy, 0, 0, 0));
+                            if (rgb_key) rgb_key->set_pixel(rgb_key, dumy, 0, 0, 0);
                         }
                         dumy++;
                     }
                 }
                 // Flush RGB values to LEDs
-                ESP_ERROR_CHECK(rgb_key->refresh(rgb_key, 100));
+                if (rgb_key) rgb_key->refresh(rgb_key, 100);
+            }
+
+            if (modes == 6) // Per-key colour from active layer
+            {
+                for (int r = 0; r < MATRIX_ROWS; r++)
+                {
+                    for (int c = 0; c < MATRIX_COLS; c++)
+                    {
+                        uint8_t *rgb = key_layouts[current_layout].key_rgb[r][c];
+                        if (rgb_key) rgb_key->set_pixel(rgb_key, r * MATRIX_COLS + c, rgb[0], rgb[1], rgb[2]);
+                    }
+                }
+                if (rgb_key) rgb_key->refresh(rgb_key, 100);
             }
 
             vTaskDelay(pdMS_TO_TICKS(RGB_LED_REFRESH_SPEED));
@@ -258,10 +258,10 @@ void key_led_modes(void)
                     }
 
                     hsv2rgb(hue, rgb->s, rgb->v, &red, &green, &blue);
-                    ESP_ERROR_CHECK(rgb_key->set_pixel(rgb_key, i, red, green, blue));
+                    if (rgb_key) rgb_key->set_pixel(rgb_key, i, red, green, blue);
                 }
             }
-            ESP_ERROR_CHECK(rgb_key->refresh(rgb_key, 100));
+            if (rgb_key) rgb_key->refresh(rgb_key, 100);
             if (led_mode.speed < 20)
                 vTaskDelay(pdMS_TO_TICKS(RGB_LED_REFRESH_SPEED));
             else
@@ -283,14 +283,14 @@ void key_led_modes(void)
                 hsv2rgb(hue, led_mode.V, led_mode.S, &red, &green, &blue);
                 hsv2rgb(hue2, led_mode.V, led_mode.S, &red2, &green2, &blue2);
                 // Write RGB values to strip driver
-                ESP_ERROR_CHECK(rgb_key->set_pixel(rgb_key, i, red, green, blue));
+                if (rgb_key) rgb_key->set_pixel(rgb_key, i, red, green, blue);
             }
-            ESP_ERROR_CHECK(rgb_notif->set_pixel(rgb_notif, 0, red, green, blue));
-            ESP_ERROR_CHECK(rgb_notif->set_pixel(rgb_notif, 1, red, green, blue));
+            if (rgb_notif) rgb_notif->set_pixel(rgb_notif, 0, red, green, blue);
+            if (rgb_notif) rgb_notif->set_pixel(rgb_notif, 1, red, green, blue);
 
             // Flush RGB values to LEDs
-            ESP_ERROR_CHECK(rgb_key->refresh(rgb_key, 100));
-            ESP_ERROR_CHECK(rgb_notif->refresh(rgb_notif, 100));
+            if (rgb_key) rgb_key->refresh(rgb_key, 100);
+            if (rgb_notif) rgb_notif->refresh(rgb_notif, 100);
             vTaskDelay(pdMS_TO_TICKS(RGB_LED_REFRESH_SPEED));
         }
 
@@ -304,10 +304,10 @@ void key_led_modes(void)
                     hue = j * 360 / RGB_LED_KEYBOARD_NUMBER + start_rgb;
                     hsv2rgb(hue, led_mode.V, led_mode.S, &red, &green, &blue);
                     // Write RGB values to strip driver
-                    ESP_ERROR_CHECK(rgb_key->set_pixel(rgb_key, j, red, green, blue));
+                    if (rgb_key) rgb_key->set_pixel(rgb_key, j, red, green, blue);
                 }
                 // Flush RGB values to LEDs
-                ESP_ERROR_CHECK(rgb_key->refresh(rgb_key, 100));
+                if (rgb_key) rgb_key->refresh(rgb_key, 100);
                 vTaskDelay(pdMS_TO_TICKS(led_mode.speed));
                 rgb_key->clear(rgb_key, 50);
                 vTaskDelay(pdMS_TO_TICKS(RGB_LED_REFRESH_SPEED));
@@ -322,7 +322,7 @@ void key_led_modes(void)
                {
                case 0: // OFF
                        // Clear LED strip (turn off all LEDs)
-                   ESP_ERROR_CHECK(rgb_notif->clear(rgb_notif, 100));
+                   if (rgb_notif) rgb_notif->clear(rgb_notif, 100);
                    break;
                case 1: // Pulsating LEDs
                    hue += 1;
@@ -339,10 +339,10 @@ void key_led_modes(void)
                            }
 
                            hsv2rgb(hue, rgb->s, rgb->v, &red, &green, &blue);
-                           ESP_ERROR_CHECK(rgb_key->set_pixel(rgb_key, i, red, green, blue));
+                           if (rgb_key) rgb_key->set_pixel(rgb_key, i, red, green, blue);
                        }
                    }
-                   ESP_ERROR_CHECK(rgb_key->refresh(rgb_key, 100));
+                   if (rgb_key) rgb_key->refresh(rgb_key, 100);
                    vTaskDelay(pdMS_TO_TICKS(RGB_LED_REFRESH_SPEED));
                    break;
 
@@ -358,14 +358,14 @@ void key_led_modes(void)
                        hsv2rgb(hue, 100, 5, &red, &green, &blue);
                        hsv2rgb(hue2, 100, 5, &red2, &green2, &blue2);
                        // Write RGB values to strip driver
-                       ESP_ERROR_CHECK(rgb_key->set_pixel(rgb_key, i, red, green, blue));
+                       if (rgb_key) rgb_key->set_pixel(rgb_key, i, red, green, blue);
                    }
-                   ESP_ERROR_CHECK(rgb_notif->set_pixel(rgb_notif, 0, red, green, blue));
-                   ESP_ERROR_CHECK(rgb_notif->set_pixel(rgb_notif, 1, red, green, blue));
+                   if (rgb_notif) rgb_notif->set_pixel(rgb_notif, 0, red, green, blue);
+                   if (rgb_notif) rgb_notif->set_pixel(rgb_notif, 1, red, green, blue);
 
                    // Flush RGB values to LEDs
-                   ESP_ERROR_CHECK(rgb_key->refresh(rgb_key, 100));
-                   ESP_ERROR_CHECK(rgb_notif->refresh(rgb_notif, 100));
+                   if (rgb_key) rgb_key->refresh(rgb_key, 100);
+                   if (rgb_notif) rgb_notif->refresh(rgb_notif, 100);
                    vTaskDelay(pdMS_TO_TICKS(RGB_LED_REFRESH_SPEED));
                    // strip->clear(strip, 50);
                    // vTaskDelay(pdMS_TO_TICKS(EXAMPLE_CHASE_SPEED_MS));
@@ -382,14 +382,14 @@ void key_led_modes(void)
                        hsv2rgb(hue, 100, 100, &red, &green, &blue);
                        hsv2rgb(hue2, 100, 100, &red2, &green2, &blue2);
                        // Write RGB values to strip driver
-                       ESP_ERROR_CHECK(rgb_key->set_pixel(rgb_key, i, red, green, blue));
+                       if (rgb_key) rgb_key->set_pixel(rgb_key, i, red, green, blue);
                    }
-                   ESP_ERROR_CHECK(rgb_notif->set_pixel(rgb_notif, 0, red, green, blue));
-                   // ESP_ERROR_CHECK(rgb_notif->set_pixel(rgb_notif, 1, red, green, blue));
+                   if (rgb_notif) rgb_notif->set_pixel(rgb_notif, 0, red, green, blue);
+                   // if (rgb_notif) rgb_notif->set_pixel(rgb_notif, 1, red, green, blue);
 
                    // Flush RGB values to LEDs
-                   ESP_ERROR_CHECK(rgb_key->refresh(rgb_key, 100));
-                   // ESP_ERROR_CHECK(rgb_notif->refresh(rgb_notif, 100));
+                   if (rgb_key) rgb_key->refresh(rgb_key, 100);
+                   // if (rgb_notif) rgb_notif->refresh(rgb_notif, 100);
                    vTaskDelay(pdMS_TO_TICKS(RGB_LED_REFRESH_SPEED));
                    // strip->clear(strip, 50);
                    // vTaskDelay(pdMS_TO_TICKS(EXAMPLE_CHASE_SPEED_MS));
@@ -404,10 +404,10 @@ void key_led_modes(void)
                            hue = j * 360 / RGB_LED_KEYBOARD_NUMBER + start_rgb;
                            hsv2rgb(hue, 100, 100, &red, &green, &blue);
                            // Write RGB values to strip driver
-                           ESP_ERROR_CHECK(rgb_key->set_pixel(rgb_key, j, red, green, blue));
+                           if (rgb_key) rgb_key->set_pixel(rgb_key, j, red, green, blue);
                        }
                        // Flush RGB values to LEDs
-                       ESP_ERROR_CHECK(rgb_key->refresh(rgb_key, 100));
+                       if (rgb_key) rgb_key->refresh(rgb_key, 100);
                        vTaskDelay(pdMS_TO_TICKS(RGB_LED_REFRESH_SPEED));
                        rgb_key->clear(rgb_key, 50);
                        vTaskDelay(pdMS_TO_TICKS(RGB_LED_REFRESH_SPEED));
@@ -420,11 +420,11 @@ void key_led_modes(void)
                    for (int i = 0; i < RGB_LED_KEYBOARD_NUMBER; i++)
                    {
                        // Write RGB values to strip driver
-                       ESP_ERROR_CHECK(rgb_key->set_pixel(rgb_key, i, led_mode.rgb[0], led_mode.rgb[1], led_mode.rgb[2]));
-                       // ESP_ERROR_CHECK(rgb_key->set_pixel(rgb_key, i, 255, 2, 60));
+                       if (rgb_key) rgb_key->set_pixel(rgb_key, i, led_mode.rgb[0], led_mode.rgb[1], led_mode.rgb[2]);
+                       // if (rgb_key) rgb_key->set_pixel(rgb_key, i, 255, 2, 60);
                    }
                    // Flush RGB values to LEDs
-                   ESP_ERROR_CHECK(rgb_key->refresh(rgb_key, 100));
+                   if (rgb_key) rgb_key->refresh(rgb_key, 100);
                    vTaskDelay(pdMS_TO_TICKS(RGB_LED_REFRESH_SPEED));
 
                    break;

@@ -26,8 +26,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include "nvs_flash.h"
-#include "esp_event_loop.h"
-#include "tcpip_adapter.h"
+#include "esp_event.h"
+#include "esp_netif.h"
 #include "esp_wifi.h"
 #include "esp_wifi_types.h"
 #include "esp_log.h"
@@ -59,7 +59,7 @@ void wifi_initialize_send(void){
 
 	// Setting up the Wifi.
 	uint8_t slave_mac_adr[6];
-	tcpip_adapter_init();
+	esp_netif_init();
 	ESP_ERROR_CHECK(esp_event_loop_create_default());
 	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 	ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -68,7 +68,7 @@ void wifi_initialize_send(void){
 	ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
 	ESP_ERROR_CHECK(esp_wifi_start());
 	ESP_ERROR_CHECK(esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE) ); // Make sure we are on the same channel
-	ESP_ERROR_CHECK(esp_wifi_get_mac(ESP_IF_WIFI_STA,slave_mac_adr));
+	ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA,slave_mac_adr));
 
 	//Printout the mac ID (in case we change the starting one)
 	printf("DEVICE MAC ADDRESS:[");
@@ -80,7 +80,7 @@ void wifi_initialize_send(void){
 }
 
 // Callback function after sending data
-void espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status){
+void espnow_send_cb(const esp_now_send_info_t *tx_info, esp_now_send_status_t status){
 
 
 	switch(status){
@@ -134,7 +134,7 @@ void espnow_initialize_send(void){
 
 	pPeer->channel = channel;
 	memcpy(pPeer->peer_addr,master_mac_adr,6);
-	pPeer->ifidx = ESP_IF_WIFI_STA;
+	pPeer->ifidx = WIFI_IF_STA;
 	pPeer->encrypt = 0;
 	esp_now_add_peer(pPeer);
 

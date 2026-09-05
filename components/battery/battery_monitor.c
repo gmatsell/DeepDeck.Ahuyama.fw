@@ -1,79 +1,85 @@
 /*
- * This battery monitoring code is based on reading the voltage
- * after after a voltage divider and checking the level on an analog pin
- * Based on the adc example from Espressif
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
- * MA 02110-1301, USA.
- *
- * Copyright 2018 Gal Zaidenstein.
+ * Battery monitoring via voltage divider on an analog pin.
+ * Updated for ESP-IDF 5.x/6.x ADC oneshot + calibration API.
  */
 
 #include <stdlib.h>
-#include <time.h>
 #include <string.h>
-#include <assert.h>
 
 #include "esp_system.h"
-#include "driver/gpio.h"
-#include "driver/adc.h"
-#include "esp_adc_cal.h"
+#include "esp_log.h"
+#include "esp_adc/adc_oneshot.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
 
 #include "keyboard_config.h"
-
 #include "battery_monitor.h"
 
-#define DEFAULT_VREF    1100        //Use adc2_vref_to_gpio() to obtain a better estimate
-#define NO_OF_SAMPLES   500          //Multisampling
+#define TAG "BATTERY"
+#define NO_OF_SAMPLES   500
 
-static const adc_channel_t channel = BATT_PIN;
-static const adc_atten_t atten = ADC_ATTEN_DB_2_5;
-static const adc_unit_t unit = ADC_UNIT_1;
+static adc_oneshot_unit_handle_t adc_handle;
+static adc_cali_handle_t cali_handle = NULL;
+static bool cali_enabled = false;
 
 uint32_t voltage = 0;
 
-static esp_adc_cal_characteristics_t *adc_chars;
-//check battery level
-
 uint32_t get_battery_level(void) {
+    int raw = 0;
+    int sum = 0;
+    for (int i = 0; i < NO_OF_SAMPLES; i++) {
+        adc_oneshot_read(adc_handle, BATT_PIN, &raw);
+        sum += raw;
+    }
+    sum /= NO_OF_SAMPLES;
 
-	uint32_t adc_reading = 0;
-	//Multisampling
+    int mv = 0;
+    if (cali_enabled) {
+        adc_cali_raw_to_voltage(cali_handle, sum, &mv);
+    } else {
+        mv = sum * 3300 / 4095;
+    }
+    voltage = (uint32_t)mv;
 
-	for (int i = 0; i < NO_OF_SAMPLES; i++) {
-		adc_reading += adc1_get_raw((adc1_channel_t) channel);
-	}
-	adc_reading /= NO_OF_SAMPLES;
-
-	//Convert adc_reading to voltage in mV
-	voltage = esp_adc_cal_raw_to_voltage(adc_reading, adc_chars);
-	uint32_t battery_percent = ((voltage - Vout_min) * 100
-			/ (Vout_max - Vout_min));
-//    printf("Raw: %d\tVoltage: %dmV\tPercent: %d\n", adc_reading, voltage, battery_percent);
-	return battery_percent;
-
+    uint32_t battery_percent = 0;
+    if (voltage > Vout_min) {
+        battery_percent = ((voltage - Vout_min) * 100 / (Vout_max - Vout_min));
+        if (battery_percent > 100) battery_percent = 100;
+    }
+    return battery_percent;
 }
 
-//initialize battery monitor pin
 void init_batt_monitor(void) {
+    adc_oneshot_unit_init_cfg_t unit_cfg = {
+        .unit_id = ADC_UNIT_1,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&unit_cfg, &adc_handle));
 
-	adc1_config_width(ADC_WIDTH_BIT_12);
-	adc1_config_channel_atten(BATT_PIN, atten);
-	adc_chars = calloc(1, sizeof(esp_adc_cal_characteristics_t));
-	esp_adc_cal_characterize(unit, atten, ADC_WIDTH_BIT_12, DEFAULT_VREF,
-			adc_chars);
+    adc_oneshot_chan_cfg_t chan_cfg = {
+        .atten    = ADC_ATTEN_DB_2_5,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, BATT_PIN, &chan_cfg));
 
+#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
+    adc_cali_curve_fitting_config_t cali_cfg = {
+        .unit_id  = ADC_UNIT_1,
+        .chan     = BATT_PIN,
+        .atten    = ADC_ATTEN_DB_2_5,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    esp_err_t ret = adc_cali_create_scheme_curve_fitting(&cali_cfg, &cali_handle);
+    if (ret == ESP_OK) cali_enabled = true;
+#elif ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
+    adc_cali_line_fitting_config_t cali_cfg = {
+        .unit_id  = ADC_UNIT_1,
+        .atten    = ADC_ATTEN_DB_2_5,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    esp_err_t ret = adc_cali_create_scheme_line_fitting(&cali_cfg, &cali_handle);
+    if (ret == ESP_OK) cali_enabled = true;
+#endif
+    if (!cali_enabled) {
+        ESP_LOGW(TAG, "ADC calibration not available, using raw conversion");
+    }
 }
-

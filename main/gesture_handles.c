@@ -32,7 +32,7 @@ TaskHandle_t xGesture;
 
 i2c_bus_handle_t i2c_bus = NULL;
 apds9960_handle_t apds9960 = NULL;
-xTimerHandle xTimer;
+TimerHandle_t xTimer;
 int timerID = 1;
 bool flag = false;
 
@@ -72,7 +72,7 @@ esp_err_t set_timer(void)
 	return ESP_OK;
 }
 ///////////////////////////////////
-void IRAM_ATTR gesture_isr_handler(void *arg)
+void gesture_isr_handler(void *arg)
 {
 	BaseType_t task_woken = pdFALSE;
 	//	uint32_t gpio_num = (uint32_t) arg;

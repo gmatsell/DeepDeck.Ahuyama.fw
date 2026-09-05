@@ -412,8 +412,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         ESP_LOGI(TAG,"connect to the AP fail");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI(TAG, "got ip:%s",
-                 ip4addr_ntoa(&event->ip_info.ip));
+        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
@@ -446,19 +445,20 @@ uint8_t wifi_connection_init(void){
 	uint16_t num_records = 0;
 	wifi_ap_record_t* ap_records;
 	wifi_sta_config_t sta_config;
-	tcpip_adapter_ip_info_t ip_info;
+	esp_netif_ip_info_t ip_info = {0};
 	;
 
 	// if the keyboards does not use esp now we need to init wifi
 #ifndef SPLIT_MASTER
-	tcpip_adapter_init();
+	esp_netif_init();
+	esp_netif_create_default_wifi_sta();
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 	ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 	ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
 	ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA)) ; //
 	ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-	//esp_wifi_set_mac(ESP_IF_WIFI_STA, master_mac_adr);
+	//esp_wifi_set_mac(WIFI_IF_STA, master_mac_adr);
 	ESP_ERROR_CHECK(esp_wifi_start());
 #endif
 
@@ -506,7 +506,7 @@ uint8_t wifi_connection_init(void){
 						//try to connect to the default ap
 						ESP_ERROR_CHECK(esp_wifi_stop());
 						ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
-						err = esp_wifi_set_config(ESP_IF_WIFI_STA,&ap_config);
+						err = esp_wifi_set_config(WIFI_IF_STA,&ap_config);
 						ESP_LOGI(WIFI_TAG, "Found default AP %d: %s",ap_record ,ap_records[ap_record].ssid);
 						err = esp_wifi_start();
 						if(err == ESP_OK){
@@ -522,7 +522,7 @@ uint8_t wifi_connection_init(void){
 						};
 						ESP_ERROR_CHECK(esp_wifi_stop());
 						ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
-						err = esp_wifi_set_config(ESP_IF_WIFI_STA,&ap_config);
+						err = esp_wifi_set_config(WIFI_IF_STA,&ap_config);
 						if(err != ESP_OK){
 							ESP_LOGE(WIFI_TAG, "Error setting AP %s config: %s", sta_config.ssid, esp_err_to_name(err));
 						}else{
@@ -532,7 +532,7 @@ uint8_t wifi_connection_init(void){
 								ESP_LOGE(WIFI_TAG, "Error connecting to %s AP: %s", sta_config.ssid, esp_err_to_name(err));
 							}else{
 								ESP_LOGI(WIFI_TAG, "Success connecting to %s AP config",sta_config.ssid);
-								ESP_LOGI(WIFI_TAG, "IP Address: %s ,Subnet mask: %s Subnet mask: %s",ip4addr_ntoa(&ip_info.ip),ip4addr_ntoa(&ip_info.netmask),ip4addr_ntoa(&ip_info.gw));
+								ESP_LOGI(WIFI_TAG, "IP Address: " IPSTR " ,Subnet mask: " IPSTR " GW: " IPSTR, IP2STR(&ip_info.ip), IP2STR(&ip_info.netmask), IP2STR(&ip_info.gw));
 								return SUCCESS;
 							}
 						}
@@ -552,7 +552,7 @@ uint8_t wifi_connection_init(void){
 
 void get_ip(void)
 {
-	tcpip_adapter_ip_info_t ip_info;
-	tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA,&ip_info);
-	ESP_LOGI(WIFI_TAG, "IP Address: %s ,Subnet mask: %s Subnet mask: %s",ip4addr_ntoa(&ip_info.ip),ip4addr_ntoa(&ip_info.netmask),ip4addr_ntoa(&ip_info.gw));
+	esp_netif_ip_info_t ip_info;
+	esp_netif_get_ip_info(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"), &ip_info);
+	ESP_LOGI(WIFI_TAG, "IP Address: " IPSTR " ,Subnet mask: " IPSTR " GW: " IPSTR, IP2STR(&ip_info.ip), IP2STR(&ip_info.netmask), IP2STR(&ip_info.gw));
 }

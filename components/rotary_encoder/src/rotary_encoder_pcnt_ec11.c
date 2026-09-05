@@ -16,9 +16,8 @@
 #include <sys/cdefs.h>
 #include "esp_compiler.h"
 #include "esp_log.h"
-#include "driver/pcnt.h"
-#include "sys/lock.h"
-#include "hal/pcnt_hal.h"
+#include "driver/pulse_cnt.h"
+#include "driver/gpio.h"
 #include "rotary_encoder.h"
 
 #include "key_definitions.h"
@@ -40,78 +39,77 @@ static const char *TAG = "rotary_encoder";
 #define EC11_PCNT_DEFAULT_HIGH_LIMIT (100)
 #define EC11_PCNT_DEFAULT_LOW_LIMIT  (-100)
 
-// A flag to identify if pcnt isr service has been installed.
-static bool is_pcnt_isr_service_installed = false;
-// A lock to avoid pcnt isr service being installed twice in multiple threads.
-static _lock_t isr_service_install_lock;
-#define LOCK_ACQUIRE() _lock_acquire(&isr_service_install_lock)
-#define LOCK_RELEASE() _lock_release(&isr_service_install_lock)
-
 typedef struct {
     int accumu_count;
     rotary_encoder_t parent;
-    pcnt_unit_t pcnt_unit;
+    pcnt_unit_handle_t pcnt_unit;
+    pcnt_channel_handle_t chan_a;
+    pcnt_channel_handle_t chan_b;
 } ec11_t;
+
+static bool ec11_pcnt_reach_callback(pcnt_unit_handle_t unit, const pcnt_watch_event_data_t *edata, void *user_ctx)
+{
+    ec11_t *ec11 = (ec11_t *)user_ctx;
+    if (edata->watch_point_value == EC11_PCNT_DEFAULT_HIGH_LIMIT) {
+        ec11->accumu_count += EC11_PCNT_DEFAULT_HIGH_LIMIT;
+    } else if (edata->watch_point_value == EC11_PCNT_DEFAULT_LOW_LIMIT) {
+        ec11->accumu_count += EC11_PCNT_DEFAULT_LOW_LIMIT;
+    }
+    return false;
+}
 
 static esp_err_t ec11_set_glitch_filter(rotary_encoder_t *encoder, uint32_t max_glitch_us)
 {
-    esp_err_t ret_code = ESP_OK;
     ec11_t *ec11 = __containerof(encoder, ec11_t, parent);
-
-    /* Configure and enable the input filter */
-    ROTARY_CHECK(pcnt_set_filter_value(ec11->pcnt_unit, max_glitch_us * 80) == ESP_OK, "set glitch filter failed", err, ESP_FAIL);
-
+    /* IDF 5+: glitch filter must be set while unit is in init state (not enabled).
+       Stop and disable before setting, then re-enable and restart. */
+    pcnt_unit_stop(ec11->pcnt_unit);
+    pcnt_unit_disable(ec11->pcnt_unit);
+    esp_err_t ret;
     if (max_glitch_us) {
-        pcnt_filter_enable(ec11->pcnt_unit);
+        pcnt_glitch_filter_config_t filter_config = {
+            .max_glitch_ns = max_glitch_us * 1000,
+        };
+        ret = pcnt_unit_set_glitch_filter(ec11->pcnt_unit, &filter_config);
     } else {
-        pcnt_filter_disable(ec11->pcnt_unit);
+        ret = pcnt_unit_set_glitch_filter(ec11->pcnt_unit, NULL);
     }
-
-    return ESP_OK;
-err:
-    return ret_code;
+    pcnt_unit_enable(ec11->pcnt_unit);
+    pcnt_unit_clear_count(ec11->pcnt_unit);
+    pcnt_unit_start(ec11->pcnt_unit);
+    return ret;
 }
 
 static esp_err_t ec11_start(rotary_encoder_t *encoder)
 {
     ec11_t *ec11 = __containerof(encoder, ec11_t, parent);
-    pcnt_counter_resume(ec11->pcnt_unit);
-    return ESP_OK;
+    return pcnt_unit_start(ec11->pcnt_unit);
 }
 
 static esp_err_t ec11_stop(rotary_encoder_t *encoder)
 {
     ec11_t *ec11 = __containerof(encoder, ec11_t, parent);
-    pcnt_counter_pause(ec11->pcnt_unit);
-    return ESP_OK;
+    return pcnt_unit_stop(ec11->pcnt_unit);
 }
 
 static int ec11_get_counter_value(rotary_encoder_t *encoder)
 {
     ec11_t *ec11 = __containerof(encoder, ec11_t, parent);
-    int16_t val = 0;
-    pcnt_get_counter_value(ec11->pcnt_unit, &val);
-    return (val + ec11->accumu_count)/2;
+    int val = 0;
+    pcnt_unit_get_count(ec11->pcnt_unit, &val);
+    return val / 2;
 }
 
 static esp_err_t ec11_del(rotary_encoder_t *encoder)
 {
     ec11_t *ec11 = __containerof(encoder, ec11_t, parent);
+    pcnt_unit_stop(ec11->pcnt_unit);
+    pcnt_unit_disable(ec11->pcnt_unit);
+    pcnt_del_channel(ec11->chan_a);
+    pcnt_del_channel(ec11->chan_b);
+    pcnt_del_unit(ec11->pcnt_unit);
     free(ec11);
     return ESP_OK;
-}
-
-static void ec11_pcnt_overflow_handler(void *arg)
-{
-    ec11_t *ec11 = (ec11_t *)arg;
-    uint32_t status = 0;
-    pcnt_get_event_status(ec11->pcnt_unit, &status);
-
-    if (status & PCNT_EVT_H_LIM) {
-        ec11->accumu_count += EC11_PCNT_DEFAULT_HIGH_LIMIT;
-    } else if (status & PCNT_EVT_L_LIM) {
-        ec11->accumu_count += EC11_PCNT_DEFAULT_LOW_LIMIT;
-    }
 }
 
 esp_err_t rotary_encoder_new_ec11(const rotary_encoder_config_t *config, rotary_encoder_t **ret_encoder)
@@ -125,48 +123,38 @@ esp_err_t rotary_encoder_new_ec11(const rotary_encoder_config_t *config, rotary_
     ec11 = calloc(1, sizeof(ec11_t));
     ROTARY_CHECK(ec11, "allocate context memory failed", err, ESP_ERR_NO_MEM);
 
-    ec11->pcnt_unit = (pcnt_unit_t)(config->dev);
-
-    // Configure channel 0
-    pcnt_config_t dev_config = {
-        .pulse_gpio_num = config->phase_a_gpio_num,
-        .ctrl_gpio_num = config->phase_b_gpio_num,
-        .channel = PCNT_CHANNEL_0,
-        .unit = ec11->pcnt_unit,
-        .pos_mode = PCNT_COUNT_DEC,
-        .neg_mode = PCNT_COUNT_INC,
-        .lctrl_mode = PCNT_MODE_REVERSE,
-        .hctrl_mode = PCNT_MODE_KEEP,
-        .counter_h_lim = EC11_PCNT_DEFAULT_HIGH_LIMIT,
-        .counter_l_lim = EC11_PCNT_DEFAULT_LOW_LIMIT,
+    // Create PCNT unit
+    pcnt_unit_config_t unit_config = {
+        .low_limit  = EC11_PCNT_DEFAULT_LOW_LIMIT,
+        .high_limit = EC11_PCNT_DEFAULT_HIGH_LIMIT,
     };
-    ROTARY_CHECK(pcnt_unit_config(&dev_config) == ESP_OK, "config pcnt channel 0 failed", err, ESP_FAIL);
+    ROTARY_CHECK(pcnt_new_unit(&unit_config, &ec11->pcnt_unit) == ESP_OK,
+                 "create pcnt unit failed", err, ESP_FAIL);
 
-    // Configure channel 1
-    dev_config.pulse_gpio_num = config->phase_b_gpio_num;
-    dev_config.ctrl_gpio_num = config->phase_a_gpio_num;
-    dev_config.channel = PCNT_CHANNEL_1;
-    dev_config.pos_mode = PCNT_COUNT_INC;
-    dev_config.neg_mode = PCNT_COUNT_DEC;
-    ROTARY_CHECK(pcnt_unit_config(&dev_config) == ESP_OK, "config pcnt channel 1 failed", err, ESP_FAIL);
+    // Channel 0: edge on phase_a, level on phase_b
+    pcnt_chan_config_t chan_a_cfg = {
+        .edge_gpio_num  = config->phase_a_gpio_num,
+        .level_gpio_num = config->phase_b_gpio_num,
+    };
+    ROTARY_CHECK(pcnt_new_channel(ec11->pcnt_unit, &chan_a_cfg, &ec11->chan_a) == ESP_OK,
+                 "create pcnt channel 0 failed", err, ESP_FAIL);
+    pcnt_channel_set_edge_action(ec11->chan_a, PCNT_CHANNEL_EDGE_ACTION_DECREASE, PCNT_CHANNEL_EDGE_ACTION_INCREASE);
+    pcnt_channel_set_level_action(ec11->chan_a, PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE);
 
-    // PCNT pause and reset value
-    pcnt_counter_pause(ec11->pcnt_unit);
-    pcnt_counter_clear(ec11->pcnt_unit);
+    // Channel 1: edge on phase_b, level on phase_a
+    pcnt_chan_config_t chan_b_cfg = {
+        .edge_gpio_num  = config->phase_b_gpio_num,
+        .level_gpio_num = config->phase_a_gpio_num,
+    };
+    ROTARY_CHECK(pcnt_new_channel(ec11->pcnt_unit, &chan_b_cfg, &ec11->chan_b) == ESP_OK,
+                 "create pcnt channel 1 failed", err, ESP_FAIL);
+    pcnt_channel_set_edge_action(ec11->chan_b, PCNT_CHANNEL_EDGE_ACTION_INCREASE, PCNT_CHANNEL_EDGE_ACTION_DECREASE);
+    pcnt_channel_set_level_action(ec11->chan_b, PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE);
 
-    // register interrupt handler in a thread-safe way
-    LOCK_ACQUIRE();
-    if (!is_pcnt_isr_service_installed) {
-        ROTARY_CHECK(pcnt_isr_service_install(0) == ESP_OK, "install isr service failed", err, ESP_FAIL);
-        // make sure pcnt isr service won't be installed more than one time
-        is_pcnt_isr_service_installed = true;
-    }
-    LOCK_RELEASE();
-
-    pcnt_isr_handler_add(ec11->pcnt_unit, ec11_pcnt_overflow_handler, ec11);
-
-    pcnt_event_enable(ec11->pcnt_unit, PCNT_EVT_H_LIM);
-    pcnt_event_enable(ec11->pcnt_unit, PCNT_EVT_L_LIM);
+    // Enable, clear, start
+    pcnt_unit_enable(ec11->pcnt_unit);
+    pcnt_unit_clear_count(ec11->pcnt_unit);
+    pcnt_unit_start(ec11->pcnt_unit);
 
     ec11->parent.del = ec11_del;
     ec11->parent.start = ec11_start;
@@ -178,19 +166,16 @@ esp_err_t rotary_encoder_new_ec11(const rotary_encoder_config_t *config, rotary_
     ec11->parent.last_encoder_count = 0;
     ec11->parent.fsm_state = S_IDLE;
     ec11->parent.fsm_timer = 0;
-    ec11->parent.long_pressed_time =  100000;
+    ec11->parent.long_pressed_time  = 100000;
     ec11->parent.short_pressed_time = 60000;
 
-    //Configure Encoder button
-    if(config->button_gpio_num != GPIO_NUM_NC)
-    {
-        gpio_pad_select_gpio(config->button_gpio_num);
+    // Configure encoder button GPIO
+    if (config->button_gpio_num != GPIO_NUM_NC) {
         gpio_set_direction(config->button_gpio_num, GPIO_MODE_INPUT);
-        gpio_set_pull_mode(config->button_gpio_num,GPIO_PULLDOWN_ONLY);
+        gpio_set_pull_mode(config->button_gpio_num, GPIO_PULLDOWN_ONLY);
     }
 
     *ret_encoder = &(ec11->parent);
-
     return ESP_OK;
 err:
     if (ec11) {

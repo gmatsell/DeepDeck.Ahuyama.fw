@@ -22,6 +22,7 @@ typedef struct dd_layer_str {
 	uint16_t gesture_map[GESTURE_SIZE];                    // Map for gesture sensor
 	bool active;
 	char uuid_str[SHORT_UUID_STR_LEN];
+	uint8_t key_rgb[MATRIX_ROWS][MATRIX_COLS][3];          // Per-key RGB colour (R,G,B); 0,0,0 = off
 } dd_layer;
 
 
@@ -32,8 +33,8 @@ typedef struct dd_layer_str {
 // } dd_macros;
 
 typedef struct dd_macros_str {
-	uint16_t key[MACRO_LEN];  				//200 keys ---> MACRO_LEN = 5       
-	char name[USER_MACRO_NAME_LEN];       //  200 macros ---> Name of each macro up to 32 characters
+	uint16_t key[USER_MACRO_LEN];         // Up to USER_MACRO_LEN keycodes; KC_NO mid-array = step separator
+	char name[USER_MACRO_NAME_LEN];       // Name of each macro up to USER_MACRO_NAME_LEN characters
 	int keycode;
 } dd_macros;
 

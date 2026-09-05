@@ -17,6 +17,7 @@
 #include "esp_compiler.h"
 #include "esp_log.h"
 #include "menu.h"
+#include "oled_tasks.h"
 #include "keyboard_config.h"
 #include "nvs_funcs.h"
 
@@ -29,6 +30,10 @@
 // static const char *TAG = "menu";
 
 volatile menu_event_t menu_event;
+deepdeck_status_t deepdeck_status;
+menu_t menu_main;
+
+static menu_ret menu_berlin_dance(void) { berlinDance(); return mret_none; }
 
 // typedef struct menu_item_str_t{
 //     char * description; //String of the menu item
@@ -80,7 +85,7 @@ menu_item_t m_main_array[] =
         // Descripción                 //Acción             //Siguiente menu      ó     //Función
         //  {menu_main_description[0],    MA_MENU,                BLUETOOTH_MENU,             0},
         {menu_main_description[0], MA_MENU, LED_MODE_MENU, 0},
-        {menu_main_description[1], MA_FUNCTION, NONE, &berlinDance},
+        {menu_main_description[1], MA_FUNCTION, NONE, &menu_berlin_dance},
         {menu_main_description[2], MA_FUNCTION, NONE, &menu_exit},
         {0, MA_END, 0, 0}};
 // ------------------Bluetooth Menu-------------------------------
@@ -120,9 +125,9 @@ menu_item_t m_led_array[] =
 menu_t menu_array[menu_num] =
     {
         // Title                      //Subtitle                      //Item array
-        {menu_titles[MAIN_MENU], menu_subtitles[MAIN_MENU], &m_main_array},
-        //{menu_titles[BLUETOOTH_MENU], menu_subtitles[BLUETOOTH_MENU], &m_bluetooth_array},
-        {menu_titles[LED_MODE_MENU], menu_subtitles[LED_MODE_MENU], &m_led_array},
+        {menu_titles[MAIN_MENU], menu_subtitles[MAIN_MENU], m_main_array},
+        //{menu_titles[BLUETOOTH_MENU], menu_subtitles[BLUETOOTH_MENU], m_bluetooth_array},
+        {menu_titles[LED_MODE_MENU], menu_subtitles[LED_MODE_MENU], m_led_array},
 };
 
 /*
@@ -496,27 +501,27 @@ uint8_t menu_send_rgb_mode(uint8_t mode)
 }
 
 // ToDo: Optimize this
-uint8_t menu_rgb_mode_0(void)
+menu_ret menu_rgb_mode_0(void)
 {
   return menu_send_rgb_mode(0);
 }
 
-uint8_t menu_rgb_mode_1(void)
+menu_ret menu_rgb_mode_1(void)
 {
   return menu_send_rgb_mode(1);
 }
 
-uint8_t menu_rgb_mode_2(void)
+menu_ret menu_rgb_mode_2(void)
 {
   return menu_send_rgb_mode(2);
 }
 
-uint8_t menu_rgb_mode_3(void)
+menu_ret menu_rgb_mode_3(void)
 {
   return menu_send_rgb_mode(3);
 }
 
-uint8_t menu_rgb_mode_4(void)
+menu_ret menu_rgb_mode_4(void)
 {
   return menu_send_rgb_mode(4);
 }

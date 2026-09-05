@@ -1,5 +1,7 @@
 #include "keycode_conv.h"
 #include "freertos/FreeRTOS.h"
+int BLE_EN = 0;
+QueueHandle_t input_str_q = NULL;
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include "esp_log.h"

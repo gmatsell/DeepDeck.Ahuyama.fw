@@ -169,8 +169,10 @@ void nvs_read_layers(dd_layer *layers_array)
 	for (int i = 0; i < layer_num; i++)
 	{
 		sprintf(layer_key, "layer_%d", i);
+		memset(&layers_array[i], 0, sizeof(dd_layer));
+		dd_layer_size = sizeof(dd_layer);
 		res = nvs_get_blob(nvs_layer_handle, layer_key, (void *)&layers_array[i], &dd_layer_size);
-		if (res != ESP_OK)
+		if (res != ESP_OK && res != ESP_ERR_NVS_INVALID_LENGTH)
 		{
 			ESP_LOGE(TAG, "Error (%s) reading layer %s!\n", esp_err_to_name(res), layer_key);
 		}
@@ -549,8 +551,10 @@ void nvs_load_macros(void)
 	for (int i = 0; i < macro_num; i++)
 	{
 		sprintf(macro_key, "macro_%hu", (i + 1));
+		memset(&user_macros[i], 0, sizeof(dd_macros));
+		dd_macros_size = sizeof(dd_macros);
 		res = nvs_get_blob(nvs_handle, macro_key, (void *)&user_macros[i], &dd_macros_size);
-		if (res != ESP_OK)
+		if (res != ESP_OK && res != ESP_ERR_NVS_INVALID_LENGTH)
 		{
 			ESP_LOGE("++", "Error (%s) reading Macro %s!\n", esp_err_to_name(res), macro_key);
 		}
@@ -613,8 +617,10 @@ esp_err_t nvs_create_new_macro(dd_macros macro)
 	for (i = 0; i < macro_num - 1; i++)
 	{
 		sprintf(temp_key, "macro_%d", (i + 1));
+		memset(&temp_macro[i], 0, sizeof(dd_macros));
+		dd_macros_size = sizeof(dd_macros);
 		error = nvs_get_blob(nvs_handle, temp_key, (void *)&temp_macro[i], &dd_macros_size);
-		if (error != ESP_OK)
+		if (error != ESP_OK && error != ESP_ERR_NVS_INVALID_LENGTH)
 		{
 			ESP_LOGE("MACROS", "Error (%s) reading Macro %s!\n", esp_err_to_name(error), temp_key);
 			free(temp_macro);
@@ -685,10 +691,42 @@ esp_err_t nvs_update_macro(dd_macros macro)
 esp_err_t nvs_delete_macro(dd_macros macro)
 {
 	nvs_handle_t nvs_handle;
-	char macro_key[10];
-	ESP_ERROR_CHECK(nvs_open(LAYER_NAMESPACE, NVS_READWRITE, &nvs_handle));
-	sprintf(macro_key, "macro_%hu", (macro.keycode - MACRO_BASE_VAL));
-	ESP_ERROR_CHECK(nvs_set_blob(nvs_handle, macro_key, (void *)&macro, sizeof(dd_macros)));
+	char macro_key[17];
+	esp_err_t error;
+
+	// Find the macro in the in-memory array by keycode
+	int del_idx = -1;
+	for (int i = 0; i < total_macros; i++)
+	{
+		if (user_macros[i].keycode == macro.keycode)
+		{
+			del_idx = i;
+			break;
+		}
+	}
+	if (del_idx < 0)
+		return ESP_ERR_NOT_FOUND;
+
+	uint8_t new_count = total_macros - 1;
+
+	error = nvs_open(MACROS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+	if (error != ESP_OK)
+		return error;
+
+	// Write the compacted array (skip del_idx) back to NVS
+	int dst = 1;
+	for (int i = 0; i < total_macros; i++)
+	{
+		if (i == del_idx) continue;
+		snprintf(macro_key, sizeof(macro_key), "macro_%d", dst++);
+		error = nvs_set_blob(nvs_handle, macro_key, (void *)&user_macros[i], sizeof(dd_macros));
+		if (error != ESP_OK) { nvs_close(nvs_handle); return error; }
+	}
+	// Erase the now-unused last slot
+	snprintf(macro_key, sizeof(macro_key), "macro_%d", dst);
+	nvs_erase_key(nvs_handle, macro_key);
+
+	ESP_ERROR_CHECK(nvs_set_u8(nvs_handle, MACROS_KEY, new_count));
 	ESP_ERROR_CHECK(nvs_commit(nvs_handle));
 	nvs_close(nvs_handle);
 	nvs_load_macros();

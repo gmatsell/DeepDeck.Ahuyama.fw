@@ -53,7 +53,6 @@
 #include "esp_bt_main.h"
 #include "driver/gpio.h"
 #include "driver/rtc_io.h"
-#include "driver/touch_pad.h"
 #include "esp_timer.h"
 #include "esp_sleep.h"
 #include "esp_pm.h"
@@ -68,7 +67,6 @@
 #include "battery_monitor.h"
 #include "nvs_funcs.h"
 #include "nvs_keymaps.h"
-#include "mqtt.h"
 
 #include "esp_err.h"
 

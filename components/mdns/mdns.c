@@ -8,6 +8,10 @@
 #include "mdns_private.h"
 #include "mdns_networking.h"
 #include "esp_log.h"
+#include "esp_random.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_eth.h"
 #include <string.h>
 #include <sys/param.h>
 
@@ -219,7 +223,7 @@ esp_err_t _mdns_send_rx_action(mdns_rx_packet_t * packet)
 
     action->type = ACTION_RX_HANDLE;
     action->data.rx_handle.packet = packet;
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         free(action);
         return ESP_ERR_NO_MEM;
     }
@@ -2711,10 +2715,10 @@ static bool _mdns_delegate_hostname_remove(const char * hostname)
 static bool _mdns_name_is_discovery(mdns_name_t * name, uint16_t type)
 {
     return (
-               (name->host && name->host[0] && !strcasecmp(name->host, "_services"))
-               && (name->service && name->service[0] && !strcasecmp(name->service, "_dns-sd"))
-               && (name->proto && name->proto[0] && !strcasecmp(name->proto, "_udp"))
-               && (name->domain && name->domain[0] && !strcasecmp(name->domain, MDNS_DEFAULT_DOMAIN))
+               (name->host[0] && !strcasecmp(name->host, "_services"))
+               && (name->service[0] && !strcasecmp(name->service, "_dns-sd"))
+               && (name->proto[0] && !strcasecmp(name->proto, "_udp"))
+               && (name->domain[0] && !strcasecmp(name->domain, MDNS_DEFAULT_DOMAIN))
                && type == MDNS_TYPE_PTR
            );
 }
@@ -3249,7 +3253,7 @@ void mdns_parse_packet(mdns_rx_packet_t * packet)
                 discovery = true;
             } else if (!name->sub && _mdns_name_is_ours(name)) {
                 ours = true;
-                if (name->service && name->service[0] && name->proto && name->proto[0]) {
+                if (name->service[0] && name->proto[0]) {
                     service = _mdns_get_service_item(name->service, name->proto, NULL);
                 }
             } else {
@@ -4550,7 +4554,7 @@ static esp_err_t _mdns_send_search_action(mdns_action_type_t type, mdns_search_o
 
     action->type = type;
     action->data.search_add.search = search;
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         free(action);
         return ESP_ERR_NO_MEM;
     }
@@ -4584,7 +4588,7 @@ static void _mdns_scheduler_run(void)
             action->type = ACTION_TX_HANDLE;
             action->data.tx_handle.packet = p;
             p->queued = true;
-            if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+            if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
                 free(action);
                 p->queued = false;
             }
@@ -4732,7 +4736,7 @@ static esp_err_t _mdns_service_task_stop(void)
         mdns_action_t action;
         mdns_action_t * a = &action;
         action.type = ACTION_TASK_STOP;
-        if (xQueueSend(_mdns_server->action_queue, &a, (portTickType)0) != pdPASS) {
+        if (xQueueSend(_mdns_server->action_queue, &a, (TickType_t)0) != pdPASS) {
             vTaskDelete(_mdns_service_task_handle);
             _mdns_service_task_handle = NULL;
         }
@@ -4749,7 +4753,7 @@ static esp_err_t _mdns_service_task_stop(void)
  * Public Methods
  * */
 
-esp_err_t mdns_handle_system_event(void *ctx, system_event_t *event)
+esp_err_t mdns_handle_system_event(void *ctx, void *event)
 {
     /* no-op, kept for compatibility */
     return ESP_OK;
@@ -4775,7 +4779,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         action->data.sys_event.interface = event->esp_netif;
     }
 
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         free(action);
     }
 }
@@ -4935,7 +4939,7 @@ esp_err_t mdns_hostname_set(const char * hostname)
     action->type = ACTION_HOSTNAME_SET;
     action->data.hostname_set.hostname = new_hostname;
     action->data.hostname_set.calling_task = xTaskGetCurrentTaskHandle();
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         free(new_hostname);
         free(action);
         return ESP_ERR_NO_MEM;
@@ -4966,7 +4970,7 @@ esp_err_t mdns_delegate_hostname_add(const char * hostname, const mdns_ip_addr_t
     action->type = ACTION_DELEGATE_HOSTNAME_ADD;
     action->data.delegate_hostname.hostname = new_hostname;
     action->data.delegate_hostname.address_list = copy_address_list(address_list);
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         free(new_hostname);
         free(action);
         return ESP_ERR_NO_MEM;
@@ -4995,7 +4999,7 @@ esp_err_t mdns_delegate_hostname_remove(const char * hostname)
     }
     action->type = ACTION_DELEGATE_HOSTNAME_REMOVE;
     action->data.delegate_hostname.hostname = new_hostname;
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         free(new_hostname);
         free(action);
         return ESP_ERR_NO_MEM;
@@ -5029,7 +5033,7 @@ esp_err_t mdns_instance_name_set(const char * instance)
     }
     action->type = ACTION_INSTANCE_SET;
     action->data.instance = new_instance;
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         free(new_instance);
         free(action);
         return ESP_ERR_NO_MEM;
@@ -5085,7 +5089,7 @@ esp_err_t mdns_service_add_for_host(const char * instance, const char * service,
     }
     action->type = ACTION_SERVICE_ADD;
     action->data.srv_add.service = item;
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         _mdns_free_service(s);
         free(item);
         free(action);
@@ -5099,7 +5103,7 @@ esp_err_t mdns_service_add_for_host(const char * instance, const char * service,
         if (expired >= timeout_ticks) {
             return ESP_FAIL; // Timeout
         }
-        vTaskDelay(MIN(10 / portTICK_RATE_MS, timeout_ticks - expired));
+        vTaskDelay(MIN(10 / portTICK_PERIOD_MS, timeout_ticks - expired));
     }
 
     return ESP_OK;
@@ -5143,7 +5147,7 @@ esp_err_t mdns_service_port_set_for_host(const char * service, const char * prot
     action->type = ACTION_SERVICE_PORT_SET;
     action->data.srv_port.service = s;
     action->data.srv_port.port = port;
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         free(action);
         return ESP_ERR_NO_MEM;
     }
@@ -5187,7 +5191,7 @@ esp_err_t mdns_service_txt_set_for_host(const char * service, const char * proto
     action->data.srv_txt_replace.service = s;
     action->data.srv_txt_replace.txt = new_txt;
 
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         _mdns_free_linked_txt(new_txt);
         free(action);
         return ESP_ERR_NO_MEM;
@@ -5241,7 +5245,7 @@ esp_err_t mdns_service_txt_item_set_for_host_with_explicit_value_len(const char 
         action->data.srv_txt_set.value = NULL;
         action->data.srv_txt_set.value_len = 0;
     }
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         free(action->data.srv_txt_set.key);
         free(action->data.srv_txt_set.value);
         free(action);
@@ -5300,7 +5304,7 @@ esp_err_t mdns_service_txt_item_remove_for_host(const char * service, const char
         free(action);
         return ESP_ERR_NO_MEM;
     }
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         free(action->data.srv_txt_del.key);
         free(action);
         return ESP_ERR_NO_MEM;
@@ -5343,7 +5347,7 @@ esp_err_t mdns_service_instance_name_set_for_host(const char * service, const ch
     action->type = ACTION_SERVICE_INSTANCE_SET;
     action->data.srv_instance.service = s;
     action->data.srv_instance.instance = new_instance;
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         free(new_instance);
         free(action);
         return ESP_ERR_NO_MEM;
@@ -5376,7 +5380,7 @@ esp_err_t mdns_service_remove_for_host(const char * service, const char * proto,
     }
     action->type = ACTION_SERVICE_DEL;
     action->data.srv_del.service = s;
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         free(action);
         return ESP_ERR_NO_MEM;
     }
@@ -5406,7 +5410,7 @@ esp_err_t mdns_service_remove_all(void)
         return ESP_ERR_NO_MEM;
     }
     action->type = ACTION_SERVICES_CLEAR;
-    if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
+    if (xQueueSend(_mdns_server->action_queue, &action, (TickType_t)0) != pdPASS) {
         free(action);
         return ESP_ERR_NO_MEM;
     }

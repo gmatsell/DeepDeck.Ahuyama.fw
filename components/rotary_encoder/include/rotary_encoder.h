@@ -177,7 +177,7 @@ encoder_state_t encoder_state(rotary_encoder_t *encoder);
  * @return
  *      - encoder_state_t: TODO
  */
-void encoder_command(uint8_t command, uint16_t encoder_commands[4]);
+void encoder_command(uint8_t command, uint16_t encoder_commands[5]);
 
 
 /**
